@@ -16,6 +16,8 @@ import (
 	pcTypes "github.com/pokt-network/pocket-core/x/pocketcore/types"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/tendermint/go-amino"
+	cryptoamino "github.com/tendermint/tendermint/crypto/encoding/amino"
+	tmState "github.com/tendermint/tendermint/state"
 )
 
 func unmarshalBinaryLengthPrefixed(codec *amino.Codec, bz []byte, ptr interface{}) error {
@@ -83,27 +85,61 @@ func dumpCommitInfo(db *leveldb.DB, height int64) {
 	}
 }
 
-func main() {
-	var appDbDir string
-	if len(os.Args) >= 2 {
-		appDbDir = os.Args[1]
-	} else {
-		appDbDir = os.ExpandEnv("$HOME/.pocket/data/application.db")
+func dumpValidatorSet(db *leveldb.DB, height int64) {
+	cdc := amino.NewCodec()
+	cryptoamino.RegisterAmino(cdc)
+
+	calcValidatorsKey := []byte(fmt.Sprintf("validatorsKey:%v", height))
+	valsBytes, err := db.Get(calcValidatorsKey, nil)
+	if err != nil {
+		fmt.Println("Cannot read validatorsKey at ", height)
+		return
 	}
+
+	var vals tmState.ValidatorsInfo
+	err = cdc.UnmarshalBinaryBare(valsBytes, &vals)
+	if err != nil {
+		fmt.Println("Failed to unmarhsal validatorsKey at ", height)
+		return
+	}
+
+	fmt.Printf("%d: Validators\n", height)
+	for _, val := range vals.ValidatorSet.Validators {
+		fmt.Printf("%v %v\n", val.Address, val.VotingPower)
+	}
+}
+
+func main() {
+	var dataDir string
+	if len(os.Args) >= 2 {
+		dataDir = os.Args[1]
+	} else {
+		dataDir = os.ExpandEnv("$HOME/.pocket/data")
+	}
+
+	appDbDir := dataDir + "/application.db"
+	stateDbDir := dataDir + "/state.db"
 
 	var height int64
 	if len(os.Args) >= 3 {
 		height, _ = strconv.ParseInt(os.Args[2], 10, 64)
 	}
 
-	srcDb, err := leveldb.OpenFile(appDbDir, nil)
+	srcAppDb, err := leveldb.OpenFile(appDbDir, nil)
 	if err != nil {
 		log.Fatal("Failed to open db: " + appDbDir)
 	}
-	defer srcDb.Close()
+	defer srcAppDb.Close()
+
+	srcStateDb, err := leveldb.OpenFile(stateDbDir, nil)
+	if err != nil {
+		log.Fatal("Failed to open db: " + stateDbDir)
+	}
+	defer srcStateDb.Close()
 
 	if height == 0 {
-		height = getLatestHeight(srcDb)
+		height = getLatestHeight(srcAppDb)
 	}
-	dumpCommitInfo(srcDb, height)
+	// dumpCommitInfo(srcAppDb, height)
+	dumpValidatorSet(srcStateDb, height)
 }
